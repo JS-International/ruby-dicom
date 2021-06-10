@@ -39,6 +39,8 @@ module DICOM
     attr_accessor :port
     # The maximum period the server will wait on an answer from a client before aborting the communication.
     attr_accessor :timeout
+    # An SSL context
+    attr_accessor :ssl_context
 
     # A hash containing the abstract syntaxes that will be accepted.
     attr_reader :accepted_abstract_syntaxes
@@ -68,6 +70,10 @@ module DICOM
       # Required parameters:
       @port = port
       # Optional parameters (and default values):
+      if (@ssl_context = options[:ssl_context])
+        require 'openssl'
+        require 'base64'
+      end
       @file_handler = options[:file_handler] || FileHandler
       @host = options[:host] || '0.0.0.0'
       @host_ae =  options[:host_ae]  || "RUBY_DICOM"
@@ -182,7 +188,11 @@ module DICOM
         logger.info("Started DICOM SCP server on port #{@port}.")
         logger.info("Waiting for incoming transmissions...\n\n")
         # Initiate server:
-        @scp = TCPServer.new(@host, @port)
+        if ssl_context
+          @scp = OpenSSL::SSL::SSLServer.new( TCPServer.new(host, port), ssl_context )
+        else
+          @scp = TCPServer.new(host, port)
+        end
         # Use a loop to listen for incoming messages:
         loop do
           Thread.start(@scp.accept) do |session|

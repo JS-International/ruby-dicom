@@ -40,7 +40,7 @@ module DICOM
       @timeout = options[:timeout] || 10 # seconds
       @min_length = 10 # minimum number of bytes to expect in an incoming transmission
       # Variables used for monitoring state of transmission:
-      @session = nil # TCP connection
+      @session = nil #  connection
       @association = nil # DICOM Association status
       @request_approved = nil # Status of our DICOM request
       @release = nil # Status of received, valid release response
@@ -1114,8 +1114,12 @@ module DICOM
     # * <tt>adress</tt> -- String. The adress (IP) of the remote node.
     # * <tt>port</tt> -- Integer. The network port to be used in the network communication.
     #
-    def start_session(adress, port)
-      @session = TCPSocket.new(adress, port)
+    def start_session(host, port, ssl_context = nil)
+      if ssl_context
+        @session = OpenSSL::SSL::SSLSocket.new( TCPSocket.new(host, port), context )
+      else
+        @session = TCPSocket.new(host, port)
+      end
     end
 
     # Ends the current session by closing the connection.
@@ -1127,7 +1131,7 @@ module DICOM
     # Sends the outgoing message (encoded binary string) to the remote node.
     #
     def transmit
-      @session.send(@outgoing.string, 0)
+      @session.write(@outgoing.string, 0)
     end
 
 
@@ -1464,7 +1468,7 @@ module DICOM
         logger.error("No answer was received within the specified timeout period. Aborting.")
         stop_receiving
       else
-        data = @session.recv(@max_receive_size)
+        data = @session.sysread(@max_receive_size)
       end
       data
     end

@@ -19,12 +19,16 @@ module DICOM
     attr_accessor :max_package_size
     # The network port to be used.
     attr_accessor :port
+    # Link object
+    attr_accessor :link
     # The maximum period the client will wait on an answer from a server before aborting the communication.
     attr_accessor :timeout
     # An array, where each index contains a hash with the data elements received in a command response (with tags as keys).
     attr_reader :command_results
     # An array, where each index contains a hash with the data elements received in a data response (with tags as keys).
     attr_reader :data_results
+    # SSL Context
+    attr_reader :ssl_context
 
     # Creates a DClient instance.
     #
@@ -47,6 +51,10 @@ module DICOM
       @host_ip = host_ip
       @port = port
       # Optional parameters (and default values):
+      if (@ssl_context = options[:ssl_context])
+        require 'openssl'
+        require 'base64'
+      end
       @ae =  options[:ae]  || "RUBY_DICOM"
       @host_ae =  options[:host_ae]  || "DEFAULT"
       @max_package_size = options[:max_package_size] || 32768 # 16384
@@ -63,7 +71,7 @@ module DICOM
       # Setup the user information used in the association request::
       set_user_information_array
       # Initialize the network package handler:
-      @link = Link.new(:ae => @ae, :host_ae => @host_ae, :max_package_size => @max_package_size, :timeout => @timeout)
+      @link = Link.new(:ae => @ae, :host_ae => host_ae, :max_package_size => @max_package_size, :timeout => @timeout)
     end
 
     # Tests the connection to the server by performing a C-ECHO procedure.
@@ -452,21 +460,21 @@ module DICOM
       @association = false
       @request_approved = false
       # Initiate the association:
-      @link.build_association_request(@presentation_contexts, @user_information)
-      @link.start_session(@host_ip, @port)
-      @link.transmit
-      info = @link.receive_multiple_transmissions.first
+      link.build_association_request(@presentation_contexts, @user_information)
+      link.start_session(host_ip, port, ssl_context)
+      link.transmit
+      info = link.receive_multiple_transmissions.first
       # Interpret the results:
       if info && info[:valid]
         if info[:pdu] == PDU_ASSOCIATION_ACCEPT
           # Values of importance are extracted and put into instance variables:
           @association = true
           @max_pdu_length = info[:max_pdu_length]
-          logger.info("Association successfully negotiated with host #{@host_ae} (#{@host_ip}).")
+          logger.info("Association successfully negotiated with host #{host_ae} (#{host_ip}).")
           # Check if all our presentation contexts was accepted by the host:
           process_presentation_context_response(info[:pc])
         else
-          logger.error("Association was denied from host #{@host_ae} (#{@host_ip})!")
+          logger.error("Association was denied from host #{host_ae} (#{host_ip})!")
         end
       end
     end
@@ -476,18 +484,18 @@ module DICOM
     def establish_release
       @release = false
       if @abort
-        @link.stop_session
-        logger.info("Association has been closed. (#{@host_ae}, #{@host_ip})")
+        link.stop_session
+        logger.info("Association has been closed. (#{host_ae}, #{host_ip})")
       else
-        unless @link.session.closed?
-          @link.build_release_request
-          @link.transmit
-          info = @link.receive_single_transmission.first
-          @link.stop_session
+        unless link.session.closed?
+          link.build_release_request
+          link.transmit
+          info = link.receive_single_transmission.first
+          link.stop_session
           if info[:pdu] == PDU_RELEASE_RESPONSE
-            logger.info("Association released properly from host #{@host_ae}.")
+            logger.info("Association released properly from host #{host_ae}.")
           else
-            logger.error("Association released from host #{@host_ae}, but a release response was not registered.")
+            logger.error("Association released from host #{host_ae}, but a release response was not registered.")
           end
         else
           logger.error("Connection was closed by the host (for some unknown reason) before the association could be released properly.")
@@ -592,10 +600,10 @@ module DICOM
           # Continue with our echo, since the request was accepted.
           # Set the query command elements array:
           set_command_fragment_echo
-          @link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
-          @link.transmit
+          link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
+          link.transmit
           # Listen for incoming responses and interpret them individually, until we have received the last command fragment.
-          segments = @link.receive_multiple_transmissions
+          segments = link.receive_multiple_transmissions
           process_returned_data(segments)
           # Print stuff to screen?
         end
@@ -616,13 +624,13 @@ module DICOM
           # Continue with our query, since the request was accepted.
           # Set the query command elements array:
           set_command_fragment_find
-          @link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
-          @link.transmit
-          @link.build_data_fragment(@data_elements, presentation_context_id)
-          @link.transmit
+          link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
+          link.transmit
+          link.build_data_fragment(@data_elements, presentation_context_id)
+          link.transmit
           # A query response will typically be sent in multiple, separate packets.
           # Listen for incoming responses and interpret them individually, until we have received the last command fragment.
-          segments = @link.receive_multiple_transmissions
+          segments = link.receive_multiple_transmissions
           process_returned_data(segments)
         end
         # Close the DICOM link:
@@ -642,15 +650,15 @@ module DICOM
       if association_established?
         if request_approved?
           # Continue with our operation, since the request was accepted.
-          @link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
-          @link.transmit
-          @link.build_data_fragment(@data_elements, presentation_context_id)
-          @link.transmit
+          link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
+          link.transmit
+          link.build_data_fragment(@data_elements, presentation_context_id)
+          link.transmit
           # Listen for incoming file data:
-          success = @link.handle_incoming_data(path)
+          success = link.handle_incoming_data(path)
           if success
             # Send confirmation response:
-            @link.handle_response
+            link.handle_response
           end
         end
         # Close the DICOM link:
@@ -668,12 +676,12 @@ module DICOM
       if association_established?
         if request_approved?
           # Continue with our operation, since the request was accepted.
-          @link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
-          @link.transmit
-          @link.build_data_fragment(@data_elements, presentation_context_id)
-          @link.transmit
+          link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
+          link.transmit
+          link.build_data_fragment(@data_elements, presentation_context_id)
+          link.transmit
           # Receive confirmation response:
-          segments = @link.receive_multiple_transmissions
+          segments = link.receive_multiple_transmissions
           process_returned_data(segments)
         end
         # Close the DICOM link:
@@ -706,19 +714,19 @@ module DICOM
             dcm.delete_group(META_GROUP)
             max_header_length = 14
             data_packages = dcm.encode_segments(@max_pdu_length - max_header_length, selected_transfer_syntax)
-            @link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
-            @link.transmit
+            link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
+            link.transmit
             # Transmit all but the last data strings:
             last_data_package = data_packages.pop
             data_packages.each do |data_package|
-              @link.build_storage_fragment(PDU_DATA, presentation_context_id, DATA_MORE_FRAGMENTS, data_package)
-              @link.transmit
+              link.build_storage_fragment(PDU_DATA, presentation_context_id, DATA_MORE_FRAGMENTS, data_package)
+              link.transmit
             end
             # Transmit the last data string:
-            @link.build_storage_fragment(PDU_DATA, presentation_context_id, DATA_LAST_FRAGMENT, last_data_package)
-            @link.transmit
+            link.build_storage_fragment(PDU_DATA, presentation_context_id, DATA_LAST_FRAGMENT, last_data_package)
+            link.transmit
             # Receive confirmation response:
-            segments = @link.receive_single_transmission
+            segments = link.receive_single_transmission
             process_returned_data(segments)
           end
         else
@@ -742,15 +750,15 @@ module DICOM
           # Continue with our worklist, since the request was accepted.
           # Set the query command elements array:
           set_command_fragment_worklist # replace with _find
-          @link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
-          @link.transmit
-          #@link.build_data_fragment(@data_elements, presentation_context_id)
-          @link.build_data_fragment_dcm(dcm, presentation_context_id)
-          @link.transmit
+          link.build_command_fragment(PDU_DATA, presentation_context_id, COMMAND_LAST_FRAGMENT, @command_elements)
+          link.transmit
+          #link.build_data_fragment(@data_elements, presentation_context_id)
+          link.build_data_fragment_dcm(dcm, presentation_context_id)
+          link.transmit
           # A query response will typically be sent in multiple, separate packets.
           # Listen for incoming responses and interpret them individually, until we have received the last command fragment.
-          #segments = @link.receive_multiple_transmissions
-          segments = @link.receive_multiple_transmissions(file=true)
+          #segments = link.receive_multiple_transmissions
+          segments = link.receive_multiple_transmissions(file=true)
           #process_returned_data(segments)
           # Process the results (extracting command and data information):
           @data_results = Array.new
@@ -760,7 +768,7 @@ module DICOM
               if s[:presentation_context_flag] == COMMAND_LAST_FRAGMENT
                 @command_results << s[:results]
               elsif s[:bin]
-                @data_results << DObject.parse(s[:bin], signature: false, syntax: @link.presentation_contexts[presentation_context_id]) # transfer syntax???
+                @data_results << DObject.parse(s[:bin], signature: false, syntax: link.presentation_contexts[presentation_context_id]) # transfer syntax???
               end
             end
           end
@@ -782,7 +790,7 @@ module DICOM
       @approved_syntaxes = Hash.new
       rejected = Hash.new
       # Reset the presentation context instance variable:
-      @link.presentation_contexts = Hash.new
+      link.presentation_contexts = Hash.new
       accepted_pc = 0
       presentation_contexts.each do |pc|
         # Determine what abstract syntax this particular presentation context's id corresponds to:
@@ -792,7 +800,7 @@ module DICOM
         if pc[:result] == 0
           accepted_pc += 1
           @approved_syntaxes[abstract_syntax] = [id, pc[:transfer_syntax]]
-          @link.presentation_contexts[id] = pc[:transfer_syntax]
+          link.presentation_contexts[id] = pc[:transfer_syntax]
         else
           rejected[abstract_syntax] = [id, pc[:transfer_syntax]]
         end
@@ -800,9 +808,9 @@ module DICOM
       if rejected.length == 0
         @request_approved = true
         if @approved_syntaxes.length == 1 and presentation_contexts.length == 1
-          logger.info("The presentation context was accepted by host #{@host_ae}.")
+          logger.info("The presentation context was accepted by host #{host_ae}.")
         else
-          logger.info("All #{presentation_contexts.length} presentation contexts were accepted by host #{@host_ae} (#{@host_ip}).")
+          logger.info("All #{presentation_contexts.length} presentation contexts were accepted by host #{host_ae} (#{host_ip}).")
         end
       else
         # We still consider the request 'approved' if at least one context were accepted:
@@ -826,7 +834,7 @@ module DICOM
           prefix = @approved_syntaxes.length > 0 ? "#{rejected.length} of #{rejected.length + @approved_syntaxes.length} your presentation contexts were" : "All #{rejected.length} of your presentation contexts were"
         end
         # Log a summary of the presentation context approvals:
-        logger.warn("#{prefix} rejected by host #{@host_ae}!")
+        logger.warn("#{prefix} rejected by host #{host_ae}!")
       end
     end
 
