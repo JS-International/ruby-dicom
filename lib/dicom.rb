@@ -48,6 +48,8 @@ require_relative 'dicom/item'
 require_relative 'dicom/link'
 require_relative 'dicom/sequence'
 require_relative 'dicom/stream'
+require_relative 'dicom/ssl_context'
+require_relative 'dicom/redis_file_handler'
 # Dictionary:
 require_relative 'dicom/d_library'
 require_relative 'dicom/dictionary_element'
