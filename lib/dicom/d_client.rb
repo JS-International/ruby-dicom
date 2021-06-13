@@ -28,7 +28,7 @@ module DICOM
     # An array, where each index contains a hash with the data elements received in a data response (with tags as keys).
     attr_reader :data_results
     # SSL Context
-    attr_reader :ssl_context
+    attr_accessor :ssl_context
 
     # Creates a DClient instance.
     #

@@ -1131,7 +1131,7 @@ module DICOM
     # Sends the outgoing message (encoded binary string) to the remote node.
     #
     def transmit
-      @session.write(@outgoing.string, 0)
+      @session.syswrite(@outgoing.string, 0)
     end
 
 

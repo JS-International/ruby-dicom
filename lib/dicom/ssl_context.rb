@@ -1,6 +1,8 @@
 module DICOM
 
   class SslContext
+    require "openssl"
+    require "base64"
 
     def self.call(ssl_options = {})
       context = OpenSSL::SSL::SSLContext.new
