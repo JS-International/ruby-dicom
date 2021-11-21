@@ -1116,7 +1116,7 @@ module DICOM
     #
     def start_session(host, port, ssl_context = nil)
       if ssl_context
-        @session = OpenSSL::SSL::SSLSocket.new( TCPSocket.new(host, port), context )
+        @session = OpenSSL::SSL::SSLSocket.new( TCPSocket.new(host, port), ssl_context )
       else
         @session = TCPSocket.new(host, port)
       end
